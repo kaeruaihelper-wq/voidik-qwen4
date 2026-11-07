@@ -1,0 +1,116 @@
+# Voidik-0.8B reference configuration.
+#
+# Total parameters: ~799M. Active parameters per token: ~587M (top-2 of 8
+# experts plus the shared expert). This is a 20-layer hybrid: five repeats of
+# [GDN, GDN, GDN, QSA]. QSA attends to a 512-token local window plus 4 sink
+# tokens. N-gram embeddings are injected at layer 2 only.
+
+model:
+  vocab_size: 151936
+  hidden_size: 1536
+  num_layers: 20
+  layer_pattern: [gdn, gdn, gdn, qsa]
+  tie_embeddings: true
+  dropout: 0.0
+  rms_norm_eps: 1.0e-6
+  initializer_range: 0.02
+
+  attention:
+    num_heads: 12
+    num_kv_heads: 4
+    head_dim: 128
+    window_size: 512
+    sink_tokens: 4
+    block_size: 64
+    qk_norm: true
+    rope_theta: 10000000.0
+    attention_dropout: 0.0
+    output_gate: true
+
+  gdn:
+    num_k_heads: 4
+    num_v_heads: 12
+    head_k_dim: 128
+    head_v_dim: 128
+    conv_kernel: 4
+    chunk_size: 64
+    a_log_init_min: 1.0
+    a_log_init_max: 16.0
+    dt_bias_init_min: 0.001
+    dt_bias_init_max: 0.1
+
+  moe:
+    enabled: true
+    num_experts: 8
+    top_k: 2
+    expert_ff: 384
+    shared_ff: 384
+    aux_loss_coef: 0.01
+    router_z_loss_coef: 0.001
+    router_jitter: 0.0
+    normalize_topk: true
+    capacity_factor: 0.0
+
+  residual_bank:
+    enabled: true
+    slots: 4
+    slot_dim: 128
+    read_bias_init: -2.0
+    write_bias_init: -2.0
+    merge_at_end: true
+
+  ngram:
+    enabled: true
+    orders: [2, 3]
+    buckets_per_order: 131072
+    dim: 32
+    inject_layer: 1       # zero-based: the screenshot's "Layer 2 only"
+    scale: 1.0
+    dropout: 0.0
+    hash_seed: 0
+
+  mtp:
+    enabled: true
+    depth: 1
+    loss_weight: 0.1
+    ffn_ff: 4096
+    aux_loss_coef: 0.0
+
+data:
+  train_glob: data/fineweb/train_*.bin
+  val_glob: data/fineweb/val_*.bin
+  block_size: 2048
+  token_dtype: uint32
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  drop_last: true
+  tokens_per_epoch: 20000000000
+
+train:
+  output_dir: runs/voidik-0.8b
+  seed: 42
+  dtype: bfloat16
+  optimizer: adamw
+  fused_adamw: true
+  batch_size: 1
+  grad_accum: 32
+  max_steps: 40000        # ~21B tokens at 8 GPUs and 2048-token sequences
+  lr: 6.0e-4
+  min_lr: 6.0e-5
+  warmup_steps: 2000
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-8
+  grad_clip: 1.0
+  log_every: 10
+  eval_every: 1000
+  eval_batches: 20
+  save_every: 1000
+  keep_last_checkpoints: 3
+  gradient_checkpointing: true
+  compile: false
+  tensorboard: false
+  log_csv: true
+  resume: null

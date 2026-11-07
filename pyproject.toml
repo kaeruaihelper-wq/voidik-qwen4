@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voidik"
+version = "0.1.0"
+description = "Voidik-0.8B: hybrid GDN/QSA language model with n-gram embeddings"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.5",
+    "numpy>=1.26",
+    "PyYAML>=6.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+data = [
+    "datasets>=2.20",
+    "tokenizers>=0.20",
+]
+dev = [
+    "pytest>=8.0",
+]
+logging = [
+    "tensorboard>=2.16",
+]
+
+[tool.setuptools.packages.find]
+include = ["voidik*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

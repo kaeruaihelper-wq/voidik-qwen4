@@ -1,0 +1,89 @@
+# Tiny configuration for checking the whole training loop in minutes.
+# Use with --toy-data:
+#   python -m voidik.train --config configs/smoke.yaml --toy-data
+model:
+  vocab_size: 1024
+  hidden_size: 128
+  num_layers: 4
+  layer_pattern: [gdn, gdn, gdn, qsa]
+  tie_embeddings: true
+  attention:
+    num_heads: 2
+    num_kv_heads: 1
+    head_dim: 64
+    window_size: 64
+    sink_tokens: 4
+    block_size: 32
+    qk_norm: true
+    rope_theta: 10000.0
+    output_gate: true
+  gdn:
+    num_k_heads: 1
+    num_v_heads: 2
+    head_k_dim: 64
+    head_v_dim: 64
+    conv_kernel: 4
+    chunk_size: 32
+  moe:
+    enabled: true
+    num_experts: 4
+    top_k: 2
+    expert_ff: 64
+    shared_ff: 64
+    aux_loss_coef: 0.01
+    router_z_loss_coef: 0.001
+  residual_bank:
+    enabled: true
+    slots: 2
+    slot_dim: 32
+    merge_at_end: true
+  ngram:
+    enabled: true
+    orders: [2, 3]
+    buckets_per_order: 4096
+    dim: 16
+    inject_layer: 1
+  mtp:
+    enabled: true
+    depth: 1
+    loss_weight: 0.1
+    ffn_ff: 256
+
+data:
+  train_glob: data/toy/train_*.bin
+  val_glob: data/toy/val_*.bin
+  block_size: 64
+  token_dtype: uint32
+  num_workers: 0
+  prefetch_factor: 2
+  pin_memory: false
+  drop_last: true
+  tokens_per_epoch: 100000
+
+train:
+  output_dir: runs/smoke
+  seed: 42
+  dtype: bfloat16
+  optimizer: adamw
+  fused_adamw: true
+  batch_size: 2
+  grad_accum: 2
+  max_steps: 10
+  lr: 1.0e-3
+  min_lr: 1.0e-4
+  warmup_steps: 2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-8
+  grad_clip: 1.0
+  log_every: 1
+  eval_every: 5
+  eval_batches: 2
+  save_every: 5
+  keep_last_checkpoints: 2
+  gradient_checkpointing: true
+  compile: false
+  tensorboard: false
+  log_csv: true
+  resume: null
