@@ -1,10 +1,10 @@
 # Voidik-0.8B
 
-> **Status: untrained research prototype.** No trained weights are released.
-> The model has not been evaluated after full-scale training, and its quality
-> is unknown. Passing smoke tests verifies only limited code paths; it is not
-> evidence of model quality, training stability at scale, or competitive
-> performance.
+> **Status: research prototype.** No trained weights are released. The 0.8B
+> reference model has not been trained. A separate 58.9M compact configuration
+> completed a 1,000-step pilot; its early loss and inference results are
+> documented below. These limited results do not establish full-scale training
+> stability or competitive language quality.
 
 [Русская версия](README.ru.md)
 
@@ -22,10 +22,13 @@ for training the full-size model.
 ## Research status and limitations
 
 - The project is an implementation experiment, not a released pretrained
-  model. It includes no trained checkpoint or training dataset.
-- Full-scale training has not been run or validated. The smoke configuration
-  uses a tiny model and toy data; it does not assess the 0.8B configuration or
-  resulting language-model quality.
+  model. The 0.8B reference model has not been trained, and no checkpoint is
+  published.
+- A separate 58.9M model completed a 1,000-step pilot on FineWeb-Edu. Its
+  measured validation loss and sample generations are reported below; the run
+  is too small to establish useful general language ability.
+- The smoke configuration uses a tiny model and toy data; it does not assess
+  the 0.8B configuration or resulting language-model quality.
 - Some architectural details were inferred because the source design
   description was underspecified. This implementation should not be treated as
   an exact reproduction.
@@ -161,6 +164,69 @@ Other useful options include `--text-column`, `--min-chars`, `--max-docs`,
 `model.vocab_size` (151,936). Tokenizer assets are downloaded separately; use
 them according to their applicable license and terms.
 
+### Compact single-GPU experiment (~59M)
+
+The [configs/voidik_58m.yaml](configs/voidik_58m.yaml) configuration retains
+GDN, QSA, MoE, n-gram embeddings, the residual bank, and MTP while reducing the
+vocabulary to 16,384 tokens. It uses the public FineWeb-Edu English dataset
+both to train a compact BPE tokenizer and to prepare disjoint training and
+validation streams:
+
+```powershell
+pip install -e ".[data]"
+python scripts/train_tokenizer.py --dataset HuggingFaceFW/fineweb-edu --split train --max-docs 50000 --output data/voidik_58m/tokenizer --vocab-size 16384 --sample-mb 50
+python scripts/prepare_data.py --dataset HuggingFaceFW/fineweb-edu --split train --val-split train --tokens 40m --val-tokens 1m --shard-tokens 10m --tokenizer data/voidik_58m/tokenizer --output data/voidik_58m/tokens
+python -m tools.count_params --config configs/voidik_58m.yaml
+python -m voidik.train --config configs/voidik_58m.yaml
+```
+
+The dataset is streamed rather than downloaded in full. Review FineWeb-Edu's
+license and terms before using it.
+
+This configuration targets an 8 GB RTX 3070 with batch size 1, context 256,
+and gradient accumulation 8. The 1,000-step pilot processes about 2.05 million
+training tokens. It tests the training loop and early loss trend, not final
+language quality. The estimated run time is about 75 minutes on that GPU based
+on the initial smoke run; evaluation may add time, and real throughput may
+differ.
+
+Generate samples after training:
+
+```powershell
+python scripts/generate.py --config configs/voidik_58m.yaml --checkpoint runs/voidik-58m-1000/checkpoints/latest.pt --tokenizer data/voidik_58m/tokenizer --prompt "Once upon a time"
+```
+
+This is next-token training on ordinary text, not instruction tuning. Early
+generations may be incoherent; inspect `train_log.jsonl` and `eval_log.jsonl`,
+comparing the same prompts across checkpoints.
+
+#### Recorded 58M pilot and inference check
+
+The completed run processed 2,048,000 training tokens on one RTX 3070. Main
+validation loss was **6.21** at step 500 and **5.92** at step 1,000
+(perplexity **371** at step 1,000). These are measurements from this pilot,
+not a benchmark or evidence of general language competence.
+
+With prompt `Hello!`, temperature `0.1` repeatedly generated `||`. At
+temperature `0.7`, repetition stopped, but the result was still mostly
+incoherent:
+
+```text
+Hello!
+|Pani||Cigb]
+- Dicmaka is a result of the number of "pentical� (p. 1)
+- "Petu
+```
+
+Reproduce the inference check on the trained checkpoint:
+
+```powershell
+python scripts/generate.py --config configs/voidik_58m.yaml --checkpoint runs/voidik-58m-1000/checkpoints/latest.pt --tokenizer data/voidik_58m/tokenizer --prompt "Hello!" --max-new-tokens 40 --temperature 0.7 --top-k 40
+```
+
+The tokenizer, dataset shards, and checkpoint are local experiment artifacts
+and are not included in this repository.
+
 ## Training
 
 ### Smoke test (toy data, tiny configuration)
@@ -171,6 +237,13 @@ python -m voidik.train --config configs/smoke.yaml --toy-data --max-steps 10
 
 This is a software smoke test only. It does not train or evaluate the
 0.8B-parameter configuration.
+
+### Resume the compact run
+
+```bash
+python -m voidik.train --config configs/voidik_58m.yaml \
+  --resume runs/voidik-58m-1000/checkpoints/latest.pt
+```
 
 ### Single GPU
 
@@ -248,6 +321,7 @@ Passing tests is not a substitute for full-scale training or evaluation.
 ```text
 configs/
   voidik_0.8b.yaml       # Main 0.8B configuration
+  voidik_58m.yaml        # Compact single-GPU experiment
   smoke.yaml             # Tiny configuration for pipeline checks
 voidik/
   config.py               # Dataclass configuration and YAML loader

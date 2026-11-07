@@ -28,9 +28,42 @@ def iter_lines(paths: list[str], max_bytes: int):
                     return
 
 
+def iter_dataset(
+    dataset_name: str,
+    split: str,
+    text_column: str,
+    max_bytes: int,
+    max_docs: int | None,
+):
+    from datasets import load_dataset
+
+    dataset = load_dataset(dataset_name, split=split, streaming=True)
+    consumed = 0
+    docs = 0
+    for row in dataset:
+        text = row.get(text_column)
+        if not isinstance(text, str) or not text.strip():
+            continue
+        consumed += len(text.encode("utf-8")) + 1
+        docs += 1
+        yield text
+        if max_bytes > 0 and consumed >= max_bytes:
+            return
+        if max_docs is not None and docs >= max_docs:
+            return
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="data/demo/raw/mixed.txt")
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="Optional Hugging Face dataset name; streamed instead of reading --input.",
+    )
+    parser.add_argument("--split", default="train")
+    parser.add_argument("--text-column", default="text")
+    parser.add_argument("--max-docs", type=int, default=None)
     parser.add_argument("--output", default="data/demo/tokenizer")
     parser.add_argument("--vocab-size", type=int, default=16_000)
     parser.add_argument("--min-frequency", type=int, default=2)
@@ -48,9 +81,11 @@ def main() -> None:
         print("Install data dependencies first: pip install -e .[data]")
         raise SystemExit(1) from exc
 
-    paths = sorted(glob.glob(args.input))
-    if not paths:
+    paths = [] if args.dataset else sorted(glob.glob(args.input))
+    if not args.dataset and not paths:
         raise SystemExit(f"No input files matched {args.input!r}")
+    if args.max_docs is not None and args.max_docs <= 0:
+        raise SystemExit("--max-docs must be positive")
 
     special_tokens = [token.strip() for token in args.special_tokens.split(",") if token.strip()]
     tokenizer = Tokenizer(models.BPE(unk_token=None))
@@ -66,8 +101,22 @@ def main() -> None:
     )
 
     max_bytes = int(args.sample_mb * 1_000_000)
-    print(f"training tokenizer on {', '.join(paths)} (up to {args.sample_mb:g} MB)")
-    tokenizer.train_from_iterator(iter_lines(paths, max_bytes), trainer=trainer)
+    if args.dataset:
+        print(
+            f"training tokenizer on streamed dataset {args.dataset!r} "
+            f"split={args.split!r} (up to {args.sample_mb:g} MB)"
+        )
+        iterator = iter_dataset(
+            args.dataset,
+            args.split,
+            args.text_column,
+            max_bytes,
+            args.max_docs,
+        )
+    else:
+        print(f"training tokenizer on {', '.join(paths)} (up to {args.sample_mb:g} MB)")
+        iterator = iter_lines(paths, max_bytes)
+    tokenizer.train_from_iterator(iterator, trainer=trainer)
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)

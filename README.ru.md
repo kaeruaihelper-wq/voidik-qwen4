@@ -1,9 +1,10 @@
 # Voidik-0.8B
 
-> **Статус: исследовательский прототип, не обучен.** Веса модели не
-> публикуются, полноценное обучение и качество модели не проверены. Успешные
-> smoke-тесты проверяют отдельные компоненты и тренировочный цикл на игрушечных
-> данных, но не подтверждают качество или масштабируемость модели.
+> **Статус: исследовательский прототип.** Обученных весов в репозитории нет.
+> Референсная модель 0.8B не обучалась. Отдельная компактная конфигурация
+> 58,9M прошла пилот на 1 000 шагов; ранние метрики и результаты генерации
+> приведены ниже. Этих данных недостаточно для выводов о масштабируемости
+> обучения или качестве универсальной языковой модели.
 
 English version: [README.md](README.md).
 
@@ -146,12 +147,81 @@ data:
 `--eos-id`, `--overwrite`. Токенизатор должен иметь `vocab_size` не больше
 `model.vocab_size` (151 936), иначе загрузка данных остановится с ошибкой.
 
+### Компактный эксперимент на одной GPU (~59M)
+
+Конфигурация [configs/voidik_58m.yaml](configs/voidik_58m.yaml) сохраняет GDN,
+QSA, MoE, n-граммы, residual bank и MTP, но уменьшает словарь до 16 384
+токенов. Ниже показан запуск на публичном английском корпусе FineWeb-Edu:
+сначала потоково обучается компактный BPE-токенизатор, затем готовятся
+непересекающиеся обучающий и валидационный потоки.
+
+```powershell
+pip install -e ".[data]"
+python scripts/train_tokenizer.py --dataset HuggingFaceFW/fineweb-edu --split train --max-docs 50000 --output data/voidik_58m/tokenizer --vocab-size 16384 --sample-mb 50
+python scripts/prepare_data.py --dataset HuggingFaceFW/fineweb-edu --split train --val-split train --tokens 40m --val-tokens 1m --shard-tokens 10m --tokenizer data/voidik_58m/tokenizer --output data/voidik_58m/tokens
+python -m tools.count_params --config configs/voidik_58m.yaml
+python -m voidik.train --config configs/voidik_58m.yaml
+```
+
+Датасет читается потоком, а не скачивается целиком. Перед использованием
+проверьте лицензию и условия FineWeb-Edu.
+
+Для RTX 3070 с 8 ГБ памяти заданы batch 1, контекст 256 и накопление
+градиента 8. Пилот на 1 000 шагов обработает около 2,05 млн обучающих
+токенов. Это проверка цикла обучения и начальной динамики loss, не гарантия
+качества языка. По начальному smoke-замеру обучение займёт около 75 минут;
+валидация добавит время, а реальная скорость может отличаться.
+
+После обучения сгенерируйте примеры:
+
+```powershell
+python scripts/generate.py --config configs/voidik_58m.yaml --checkpoint runs/voidik-58m-1000/checkpoints/latest.pt --tokenizer data/voidik_58m/tokenizer --prompt "Однажды в лесу"
+```
+
+Это обучение next-token на обычном тексте, не instruction tuning. Первые
+генерации могут быть несвязными; следите за `train_log.jsonl` и
+`eval_log.jsonl`, сравнивая один и тот же prompt на разных чекпоинтах.
+
+#### Результаты пилота и проверка inference
+
+Завершён запуск на 1 RTX 3070: **1 000 шагов**, 2 048 000 обучающих токенов.
+Validation loss составил **6,21** на шаге 500 и **5,92** на шаге 1 000
+(perplexity **371** на шаге 1 000). Это метрики небольшого эксперимента, а не
+бенчмарк и не доказательство способности модели хорошо понимать язык.
+
+На prompt `Hello!` с temperature `0.1` модель зациклилась на `||`. С
+temperature `0.7` повтор исчез, но генерация осталась в основном
+бессвязной:
+
+```text
+Hello!
+|Pani||Cigb]
+- Dicmaka is a result of the number of "pentical� (p. 1)
+- "Petu
+```
+
+Повторить проверку можно на локальном чекпоинте:
+
+```powershell
+python scripts/generate.py --config configs/voidik_58m.yaml --checkpoint runs/voidik-58m-1000/checkpoints/latest.pt --tokenizer data/voidik_58m/tokenizer --prompt "Hello!" --max-new-tokens 40 --temperature 0.7 --top-k 40
+```
+
+Токенизатор, шарды датасета и чекпоинт остаются локальными файлами и не
+включены в репозиторий.
+
 ## Обучение
 
 ### Smoke-проверка (без данных, случайные токены)
 
 ```bash
 python -m voidik.train --config configs/smoke.yaml --toy-data --max-steps 10
+```
+
+### Продолжить обучение после прерывания
+
+```bash
+python -m voidik.train --config configs/voidik_58m.yaml \
+  --resume runs/voidik-58m-1000/checkpoints/latest.pt
 ```
 
 ### Один GPU
@@ -231,6 +301,7 @@ n-gram хэширование, конфиги и forward/backward модели.
 ```
 configs/
   voidik_0.8b.yaml      # основной 0.8B конфиг
+  voidik_58m.yaml       # компактный конфиг для одной GPU
   smoke.yaml            # tiny-конфиг для проверки пайплайна
 voidik/
   config.py             # dataclass-конфиги + YAML loader

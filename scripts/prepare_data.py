@@ -96,35 +96,44 @@ def tokenize_split(
             if not texts:
                 continue
             encodings = tokenizer.encode_batch(texts)
+            stop = False
             for encoding in encodings:
                 buffer.extend(encoding.ids)
                 buffer.append(eos_id)
-            buffer_tokens += sum(len(e.ids) + 1 for e in encodings)
-            docs += len(texts)
+                buffer_tokens += len(encoding.ids) + 1
+                docs += 1
 
-            if buffer_tokens >= 1_000_000 or max_tokens and total_tokens + buffer_tokens >= max_tokens:
-                tokens = np.asarray(buffer, dtype=dtype)
-                buffer.clear()
-                buffer_tokens = 0
-                pos = 0
-                while pos < len(tokens):
-                    remaining = max_tokens - total_tokens if max_tokens else None
-                    if remaining is not None and remaining <= 0:
+                if (
+                    buffer_tokens >= 1_000_000
+                    or max_tokens and total_tokens + buffer_tokens >= max_tokens
+                ):
+                    tokens = np.asarray(buffer, dtype=dtype)
+                    buffer.clear()
+                    buffer_tokens = 0
+                    pos = 0
+                    while pos < len(tokens):
+                        remaining = max_tokens - total_tokens if max_tokens else None
+                        if remaining is not None and remaining <= 0:
+                            break
+                        take = min(
+                            len(tokens) - pos,
+                            shard_tokens - current_count,
+                            remaining if remaining is not None else len(tokens) - pos,
+                        )
+                        current_fh.write(tokens[pos : pos + take].tobytes())
+                        current_count += take
+                        shards[-1]["tokens"] += take
+                        total_tokens += take
+                        pos += take
+                        if current_count >= shard_tokens:
+                            current_fh.close()
+                            open_shard()
+                    if max_tokens and total_tokens >= max_tokens:
+                        stop = True
                         break
-                    take = min(
-                        len(tokens) - pos,
-                        shard_tokens - current_count,
-                        remaining if remaining is not None else len(tokens) - pos,
-                    )
-                    current_fh.write(tokens[pos : pos + take].tobytes())
-                    current_count += take
-                    shards[-1]["tokens"] += take
-                    total_tokens += take
-                    pos += take
-                    if current_count >= shard_tokens:
-                        current_fh.close()
-                        open_shard()
-                if max_tokens and total_tokens >= max_tokens:
+
+                if max_docs is not None and docs >= max_docs:
+                    stop = True
                     break
 
             if docs % 200_000 < 512:
@@ -137,7 +146,7 @@ def tokenize_split(
                     f"({pct:.1f}%) {rate:,.0f} tok/s",
                     flush=True,
                 )
-            if max_docs is not None and docs >= max_docs:
+            if stop:
                 break
     finally:
         if buffer:
@@ -222,7 +231,13 @@ def main() -> None:
         return
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = Tokenizer.from_pretrained(args.tokenizer)
+    tokenizer_path = Path(args.tokenizer)
+    if tokenizer_path.is_dir():
+        tokenizer_path = tokenizer_path / "tokenizer.json"
+    if tokenizer_path.is_file():
+        tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    else:
+        tokenizer = Tokenizer.from_pretrained(args.tokenizer)
     tokenizer.no_truncation()
     tokenizer.no_padding()
     eos_id = args.eos_id
